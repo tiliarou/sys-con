@@ -3,9 +3,10 @@
 #include "log.h"
 
 #include "SwitchUSBDevice.h"
-#include "Controllers.h"
+#include "ControllerHelpers.h"
 #include "SwitchHDLHandler.h"
 #include "SwitchAbstractedPadHandler.h"
+#include "configFile.h"
 
 struct VendorEvent
 {
@@ -16,41 +17,39 @@ struct VendorEvent
 Result mainLoop()
 {
     Result rc = 0;
-    UsbHsInterface interfaces[16];
-    s32 total_entries;
-    std::vector<uint16_t> vendors = GetVendors();
+
     bool useAbstractedPad = hosversionBetween(5, 7);
     //hidPermitVibration(false);
     //hidPermitVibration(true);
-    VendorEvent events[vendors.size()];
+    VendorEvent events[2];
     std::vector<std::unique_ptr<SwitchVirtualGamepadHandler>> controllerInterfaces;
 
     WriteToLog("\n\nNew sysmodule session started");
 
     {
-        int i = 0;
-        for (auto &&vendor : vendors)
-        {
-            UsbHsInterfaceFilter filter;
-            filter.Flags = UsbHsInterfaceFilterFlags_idVendor;
-            filter.idVendor = vendor;
-            if (vendor == VENDOR_SONY)
-            {
-                filter.Flags |= UsbHsInterfaceFilterFlags_idProduct;
-                filter.idProduct = PRODUCT_DUALSHOCK3;
-            }
-            auto &&event = events[i] = {vendor, Event()};
+        UsbHsInterfaceFilter filter;
+        filter.Flags = UsbHsInterfaceFilterFlags_idVendor;
+        filter.idVendor = VENDOR_MICROSOFT;
+        events[0] = {VENDOR_MICROSOFT, Event()};
+        rc = usbHsCreateInterfaceAvailableEvent(&events[0].event, true, 0, &filter);
+        if (R_FAILED(rc))
+            WriteToLog("Failed to open event for microsoft");
+        else
+            WriteToLog("Successfully created event for microsoft");
 
-            rc = usbHsCreateInterfaceAvailableEvent(&event.event, true, i, &filter);
-            if (R_FAILED(rc))
-                WriteToLog("Failed to open event ", event.vendor);
-            else
-                WriteToLog("Successfully created event ", event.vendor);
-            ++i;
-        }
+        filter.Flags = UsbHsInterfaceFilterFlags_idVendor | UsbHsInterfaceFilterFlags_idProduct;
+        filter.idVendor = VENDOR_SONY;
+        filter.idProduct = PRODUCT_DUALSHOCK3;
+        events[1] = {VENDOR_SONY, Event()};
+        rc = usbHsCreateInterfaceAvailableEvent(&events[1].event, true, 1, &filter);
+        if (R_FAILED(rc))
+            WriteToLog("Failed to open event for sony dualshock 3");
+        else
+            WriteToLog("Successfully created event for sony dualshock 3");
     }
 
     controllerInterfaces.reserve(8);
+    LoadAllConfigs();
 
     while (appletMainLoop())
     {
@@ -58,7 +57,7 @@ Result mainLoop()
 #ifdef __APPLET__
         hidScanInput();
         u64 kDown = hidKeysDown(CONTROLLER_P1_AUTO);
-
+        /*
         if (kDown & KEY_Y)
         {
             for (int i = 0; i != 8; ++i)
@@ -72,7 +71,6 @@ Result mainLoop()
                 }
             }
         }
-        /*
 
         if (kDown & KEY_X)
         {
@@ -117,14 +115,15 @@ Result mainLoop()
                 WriteToLog("Succeeded event ", event.vendor);
                 WriteToLog("Interfaces size: ", controllerInterfaces.size(), "; capacity: ", controllerInterfaces.capacity());
 
-                auto &&products = GetVendorProducts(event.vendor);
-                for (auto &&product : products)
+                for (auto &&product : GetVendorProducts(event.vendor))
                 {
                     if (controllerInterfaces.size() == 8)
                     {
                         WriteToLog("Reached controller limit! skipping initialization");
                         break;
                     }
+                    UsbHsInterface interfaces[4];
+                    s32 total_entries;
 
                     UsbHsInterfaceFilter tempFilter;
                     tempFilter.Flags = UsbHsInterfaceFilterFlags_idVendor | UsbHsInterfaceFilterFlags_idProduct;
@@ -163,6 +162,9 @@ Result mainLoop()
         {
             WriteToLog("Interface state was changed");
             eventClear(usbHsGetInterfaceStateChangeEvent());
+
+            UsbHsInterface interfaces[4];
+            s32 total_entries;
 
             rc = usbHsQueryAcquiredInterfaces(interfaces, sizeof(interfaces), &total_entries);
             if (R_SUCCEEDED(rc))

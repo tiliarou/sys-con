@@ -1,8 +1,8 @@
 #pragma once
 #include "IUSBDevice.h"
 #include "ControllerTypes.h"
+#include "ControllerConfig.h"
 #include <memory>
-#include "Status.h"
 
 struct NormalizedButtonData
 {
