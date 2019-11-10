@@ -81,15 +81,8 @@ private:
     XboxOneButtonData m_buttonData;
     bool m_GuidePressed{false};
 
-    uint8_t m_rumbleDataCounter = 0;
-    /*
-
-    int16_t kLeftThumbDeadzone = 2500;  //7849;
-    int16_t kRightThumbDeadzone = 3500; //8689;
-    uint16_t kTriggerMax = 0;           //1023;
-    uint16_t kTriggerDeadzone = 0;      //120;
-    
-    */
+    //Meant to be incremented with each out packet
+    uint8_t m_outPacketSerial = 0;
 
 public:
     XboxOneController(std::unique_ptr<IUSBDevice> &&interface);
@@ -110,11 +103,12 @@ public:
     inline const XboxOneButtonData &GetButtonData() { return m_buttonData; };
 
     float NormalizeTrigger(uint16_t value);
-    void NormalizeAxis(int16_t x, int16_t y, int16_t deadzone, float *x_out, float *y_out);
+    void NormalizeAxis(int16_t x, int16_t y, uint8_t deadzonePercent, float *x_out, float *y_out);
 
     Status SendInitBytes();
     Status WriteAckGuideReport(uint8_t sequence);
     Status SetRumble(uint8_t strong_magnitude, uint8_t weak_magnitude);
 
     static void LoadConfig(const ControllerConfig *config);
+    virtual ControllerConfig *GetConfig();
 };

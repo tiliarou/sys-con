@@ -60,6 +60,26 @@ enum Xbox360InputPacketType
     XBOX360INPUT_RUMBLE = 3,
 };
 
+enum Xbox360LEDValue
+{
+    XBOX360LED_OFF,
+    XBOX360LED_ALLBLINK,
+    XBOX360LED_TOPLEFTBLINK,
+    XBOX360LED_TOPRIGHTBLINK,
+    XBOX360LED_BOTTOMLEFTBLINK,
+    XBOX360LED_BOTTOMRIGHTBLINK,
+    XBOX360LED_TOPLEFT,
+    XBOX360LED_TOPRIGHT,
+    XBOX360LED_BOTTOMLEFT,
+    XBOX360LED_BOTTOMRIGHT,
+    XBOX360LED_ROTATE,
+    XBOX360LED_BLINK,
+    XBOX360LED_SLOWBLINK,
+    XBOX360LED_ROTATE_2,
+    XBOX360LED_ALLSLOWBLINK,
+    XBOX360LED_BLINKONCE,
+};
+
 class Xbox360Controller : public IController
 {
 private:
@@ -67,13 +87,6 @@ private:
     IUSBEndpoint *m_outPipe = nullptr;
 
     Xbox360ButtonData m_buttonData;
-    /*
-
-    int16_t kLeftThumbDeadzone = 8000;  //7849;
-    int16_t kRightThumbDeadzone = 8000; //8689;
-    uint16_t kTriggerMax = 0;           //1023;
-    uint16_t kTriggerDeadzone = 0;      //120;
-    */
 
 public:
     Xbox360Controller(std::unique_ptr<IUSBDevice> &&interface);
@@ -93,11 +106,14 @@ public:
 
     inline const Xbox360ButtonData &GetButtonData() { return m_buttonData; };
 
-    float NormalizeTrigger(uint16_t value);
-    void NormalizeAxis(int16_t x, int16_t y, int16_t deadzone, float *x_out, float *y_out);
+    float NormalizeTrigger(uint8_t value);
+    void NormalizeAxis(int16_t x, int16_t y, uint8_t deadzonePercent, float *x_out, float *y_out);
 
     Status SendInitBytes();
     Status SetRumble(uint8_t strong_magnitude, uint8_t weak_magnitude);
 
+    Status SetLED(Xbox360LEDValue value);
+
     static void LoadConfig(const ControllerConfig *config);
+    virtual ControllerConfig *GetConfig();
 };

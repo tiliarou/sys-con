@@ -3,9 +3,9 @@
 #include "IController.h"
 
 //References used:
-//https://cs.chromium.org/chromium/src/device/gamepad/dualshock4_controller.cc
+//http://euc.jp/periphs/xbox-controller.ja.html
 
-struct Dualshock4ButtonData
+struct XboxButtonData
 {
     uint8_t type;
     uint8_t length;
@@ -20,40 +20,46 @@ struct Dualshock4ButtonData
     bool stick_left_click : 1;
     bool stick_right_click : 1;
 
-    bool bumper_left : 1;
-    bool bumper_right : 1;
-    bool guide : 1;
-    bool dummy1 : 1; // Always 0.
+    uint8_t reserved;
 
-    bool a : 1;
-    bool b : 1;
-    bool x : 1;
-    bool y : 1;
+    bool a;
+    bool b;
+    bool x;
+    bool y;
 
-    uint8_t trigger_left;
-    uint8_t trigger_right;
+    bool black_buttton;
+    bool white_button;
+
+    bool trigger_left;
+    bool trigger_right;
 
     int16_t stick_left_x;
     int16_t stick_left_y;
     int16_t stick_right_x;
     int16_t stick_right_y;
-
-    // Always 0.
-    uint32_t dummy2;
-    uint16_t dummy3;
 };
 
-class Dualshock4Controller : public IController
+struct XboxRumbleData
+{
+    uint8_t command;
+    uint8_t size;
+    uint8_t dummy1;
+    uint8_t big;
+    uint8_t dummy2;
+    uint8_t little;
+};
+
+class XboxController : public IController
 {
 private:
     IUSBEndpoint *m_inPipe = nullptr;
     IUSBEndpoint *m_outPipe = nullptr;
 
-    Dualshock4ButtonData m_buttonData;
+    XboxButtonData m_buttonData;
 
 public:
-    Dualshock4Controller(std::unique_ptr<IUSBDevice> &&interface);
-    virtual ~Dualshock4Controller();
+    XboxController(std::unique_ptr<IUSBDevice> &&interface);
+    virtual ~XboxController();
 
     virtual Status Initialize();
     virtual void Exit();
@@ -65,14 +71,13 @@ public:
 
     virtual NormalizedButtonData GetNormalizedButtonData();
 
-    virtual ControllerType GetType() { return CONTROLLER_DUALSHOCK4; }
+    virtual ControllerType GetType() { return CONTROLLER_XBOX360; }
 
-    inline const Dualshock4ButtonData &GetButtonData() { return m_buttonData; };
+    inline const XboxButtonData &GetButtonData() { return m_buttonData; };
 
-    float NormalizeTrigger(uint16_t value);
+    float NormalizeTrigger(uint8_t value);
     void NormalizeAxis(int16_t x, int16_t y, uint8_t deadzonePercent, float *x_out, float *y_out);
 
-    Status SendInitBytes();
     Status SetRumble(uint8_t strong_magnitude, uint8_t weak_magnitude);
 
     static void LoadConfig(const ControllerConfig *config);

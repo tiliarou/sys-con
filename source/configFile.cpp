@@ -4,24 +4,24 @@
 
 #include "switch/result.h"
 #include <cstring>
+#include <sys/stat.h>
 #include <array>
 #include "ini.h"
 #include "log.h"
 
 #define GLOBALCONFIG "config_global.ini"
 
+#define XBOXCONFIG "config_xboxorig.ini"
 #define XBOX360CONFIG "config_xbox360.ini"
 #define XBOXONECONFIG "config_xboxone.ini"
 #define DUALSHOCK3CONFIG "config_dualshock3.ini"
 #define DUALSHOCK4CONFIG "config_dualshock4.ini"
 
-std::array<const char *, 20> keyNames{
+std::array<const char *, NUM_CONTROLLERBUTTONS> keyNames{
     "FACE_UP",
     "FACE_RIGHT",
     "FACE_DOWN",
     "FACE_LEFT",
-    "LSTICK",
-    "RSTICK",
     "LSTICK_CLICK",
     "RSTICK_CLICK",
     "LEFT_BUMPER",
@@ -40,9 +40,9 @@ std::array<const char *, 20> keyNames{
 
 static ControllerButton _StringToKey(const char *text)
 {
-    for (int i = 0; i != keyNames.size(); ++i)
+    for (int i = 0; i != NUM_CONTROLLERBUTTONS; ++i)
     {
-        if (keyNames[i] == text)
+        if (strcmp(keyNames[i], text) == 0)
         {
             return static_cast<ControllerButton>(i);
         }
@@ -59,31 +59,37 @@ static int _ParseConfigLine(void *dummy, const char *section, const char *name, 
         ControllerButton button = _StringToKey(name + 4);
         ControllerButton buttonValue = _StringToKey(value);
         temp_config.buttons[button] = buttonValue;
+        temp_config.buttons[buttonValue] = button;
         return 1;
     }
     else if (strcmp(name, "left_stick_deadzone") == 0)
     {
-        temp_config.leftStickDeadzone = atoi(value);
+        temp_config.leftStickDeadzonePercent = atoi(value);
         return 1;
     }
     else if (strcmp(name, "right_stick_deadzone") == 0)
     {
-        temp_config.rightStickDeadzone = atoi(value);
+        temp_config.rightStickDeadzonePercent = atoi(value);
         return 1;
     }
     else if (strcmp(name, "left_stick_rotation") == 0)
     {
-        temp_config.leftStickRotation = atoi(value);
+        temp_config.leftStickRotationDegrees = atoi(value);
         return 1;
     }
     else if (strcmp(name, "right_stick_rotation") == 0)
     {
-        temp_config.rightStickRotation = atoi(value);
+        temp_config.rightStickRotationDegrees = atoi(value);
         return 1;
     }
     else if (strcmp(name, "trigger_deadzone") == 0)
     {
-        temp_config.triggerDeadzone = atoi(value);
+        temp_config.triggerDeadzonePercent = atoi(value);
+        return 1;
+    }
+    else if (strcmp(name, "swap_dpad_and_lstick") == 0)
+    {
+        temp_config.swapDPADandLSTICK = (strcmp(value, "true") ? false : true);
         return 1;
     }
 
@@ -92,19 +98,33 @@ static int _ParseConfigLine(void *dummy, const char *section, const char *name, 
 
 static Result _ReadFromConfig(const char *path)
 {
-    temp_config = {};
+    temp_config = ControllerConfig{};
+    for (int i = 0; i != NUM_CONTROLLERBUTTONS; ++i)
+    {
+        temp_config.buttons[i] = NOT_SET;
+    }
     return ini_parse(path, _ParseConfigLine, NULL);
 }
 
 void LoadAllConfigs()
 {
+    if (R_SUCCEEDED(_ReadFromConfig(CONFIG_PATH XBOXCONFIG)))
+    {
+        XboxController::LoadConfig(&temp_config);
+    }
+    else
+        WriteToLog("Failed to read from xbox orig config!");
+
     if (R_SUCCEEDED(_ReadFromConfig(CONFIG_PATH XBOXONECONFIG)))
         XboxOneController::LoadConfig(&temp_config);
     else
         WriteToLog("Failed to read from xbox one config!");
 
     if (R_SUCCEEDED(_ReadFromConfig(CONFIG_PATH XBOX360CONFIG)))
+    {
         Xbox360Controller::LoadConfig(&temp_config);
+        Xbox360WirelessController::LoadConfig(&temp_config);
+    }
     else
         WriteToLog("Failed to read from xbox 360 config!");
 
@@ -119,59 +139,58 @@ void LoadAllConfigs()
         WriteToLog("Failed to read from dualshock 4 config!");
 }
 
-/*
-//Config example
-[config_global.ini]
-left_stick_deadzone = 0
-right_stick_deadzone = 0
-left_stick_rotation = 0
-right_stick_rotation = 0
-trigger_deadzone = 0
-key_FACE_UP = FACE_UP
-key_FACE_RIGHT = FACE_RIGHT
-key_FACE_DOWN = FACE_DOWN
-key_FACE_LEFT = FACE_LEFT
-key_LSTICK = LSTICK
-key_RSTICK = RSTICK
-key_LSTICK_CLICK = LSTICK_CLICK
-key_RSTICK_CLICK = RSTICK_CLICK
-key_LEFT_BUMPER = LEFT_BUMPER
-key_RIGHT_BUMPER = RIGHT_BUMPER
-key_LEFT_TRIGGER = LEFT_TRIGGER
-key_RIGHT_TRIGGER = RIGHT_TRIGGER
-key_BACK = BACK
-key_START = START
-key_DPAD_UP = DPAD_UP
-key_DPAD_RIGHT = DPAD_RIGHT
-key_DPAD_DOWN = DPAD_DOWN;
-key_DPAD_LEFT = DPAD_LEFT
-key_SYNC = SYNC
-key_GUIDE = GUIDE
+bool CheckForFileChanges()
+{
+    bool filesChanged = false;
 
-[config_xboxone.ini]
-left_stick_deadzone = 2500
-right_stick_deadzone = 3500
-left_stick_rotation = 0
-right_stick_rotation = 0
-trigger_deadzone = 0
-key_FACE_UP = FACE_UP
-key_FACE_RIGHT = FACE_RIGHT
-key_FACE_DOWN = FACE_DOWN
-key_FACE_LEFT = FACE_LEFT
-key_LSTICK = LSTICK
-key_RSTICK = RSTICK
-key_LSTICK_CLICK = LSTICK_CLICK
-key_RSTICK_CLICK = RSTICK_CLICK
-key_LEFT_BUMPER = LEFT_BUMPER
-key_RIGHT_BUMPER = RIGHT_BUMPER
-key_LEFT_TRIGGER = LEFT_TRIGGER
-key_RIGHT_TRIGGER = RIGHT_TRIGGER
-key_BACK = BACK
-key_START = START
-key_DPAD_UP = DPAD_UP
-key_DPAD_RIGHT = DPAD_RIGHT
-key_DPAD_DOWN = DPAD_DOWN;
-key_DPAD_LEFT = DPAD_LEFT
-key_SYNC = SYNC
-key_GUIDE = GUIDE
-*/
+    static time_t globalConfigLastModified;
+    static time_t xboxConfigLastModified;
+    static time_t xbox360ConfigLastModified;
+    static time_t xboxOneConfigLastModified;
+    static time_t dualshock3ConfigLastModified;
+    static time_t dualshock4ConfigLastModified;
+    struct stat result;
+
+    if (stat(CONFIG_PATH GLOBALCONFIG, &result) == 0)
+        if (globalConfigLastModified != result.st_mtime)
+        {
+            globalConfigLastModified = result.st_mtime;
+            filesChanged = true;
+        }
+
+    if (stat(CONFIG_PATH XBOXCONFIG, &result) == 0)
+        if (xboxConfigLastModified != result.st_mtime)
+        {
+            xboxConfigLastModified = result.st_mtime;
+            filesChanged = true;
+        }
+
+    if (stat(CONFIG_PATH XBOX360CONFIG, &result) == 0)
+        if (xbox360ConfigLastModified != result.st_mtime)
+        {
+            xbox360ConfigLastModified = result.st_mtime;
+            filesChanged = true;
+        }
+
+    if (stat(CONFIG_PATH XBOXONECONFIG, &result) == 0)
+        if (xboxOneConfigLastModified != result.st_mtime)
+        {
+            xboxOneConfigLastModified = result.st_mtime;
+            filesChanged = true;
+        }
+
+    if (stat(CONFIG_PATH DUALSHOCK3CONFIG, &result) == 0)
+        if (dualshock3ConfigLastModified != result.st_mtime)
+        {
+            dualshock3ConfigLastModified = result.st_mtime;
+            filesChanged = true;
+        }
+
+    if (stat(CONFIG_PATH DUALSHOCK4CONFIG, &result) == 0)
+        if (dualshock4ConfigLastModified != result.st_mtime)
+        {
+            dualshock4ConfigLastModified = result.st_mtime;
+            filesChanged = true;
+        }
+    return filesChanged;
+}

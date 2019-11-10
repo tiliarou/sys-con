@@ -1,42 +1,52 @@
-#include "Controllers/Xbox360Controller.h"
+#include "Controllers/Xbox360WirelessController.h"
 #include <cmath>
 
-static ControllerConfig _xbox360ControllerConfig{};
+static ControllerConfig _xbox360WControllerConfig{};
+static const uint8_t reconnectPacket[]{0x08, 0x00, 0x0F, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+static const uint8_t poweroffPacket[]{0x00, 0x00, 0x08, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+static const uint8_t initDriverPacket[]{0x00, 0x00, 0x02, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+static const uint8_t ledPacketOn[]{0x00, 0x00, 0x08, 0x40 | XBOX360LED_TOPLEFT, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
-Xbox360Controller::Xbox360Controller(std::unique_ptr<IUSBDevice> &&interface)
+Xbox360WirelessController::Xbox360WirelessController(std::unique_ptr<IUSBDevice> &&interface)
     : IController(std::move(interface))
 {
 }
 
-Xbox360Controller::~Xbox360Controller()
+Xbox360WirelessController::~Xbox360WirelessController()
 {
     Exit();
 }
 
-Status Xbox360Controller::Initialize()
+Status Xbox360WirelessController::Initialize()
 {
     Status rc;
+    m_outputBuffer.clear();
+    m_outputBuffer.reserve(4);
 
     rc = OpenInterfaces();
+    if (S_FAILED(rc))
+        return rc;
+
+    rc = WriteToEndpoint(reconnectPacket, sizeof(reconnectPacket));
     if (S_FAILED(rc))
         return rc;
 
     SetLED(XBOX360LED_TOPLEFT);
     return rc;
 }
-void Xbox360Controller::Exit()
+void Xbox360WirelessController::Exit()
 {
     CloseInterfaces();
 }
 
-Status Xbox360Controller::OpenInterfaces()
+Status Xbox360WirelessController::OpenInterfaces()
 {
     Status rc;
     rc = m_device->Open();
     if (S_FAILED(rc))
         return rc;
 
-    //This will open each interface and try to acquire Xbox One controller's in and out endpoints, if it hasn't already
+    //This will open each interface and try to acquire Xbox 360 controller's in and out endpoints, if it hasn't already
     std::vector<std::unique_ptr<IUSBInterface>> &interfaces = m_device->GetInterfaces();
     for (auto &&interface : interfaces)
     {
@@ -44,7 +54,7 @@ Status Xbox360Controller::OpenInterfaces()
         if (S_FAILED(rc))
             return rc;
 
-        if (interface->GetDescriptor()->bInterfaceProtocol != 1)
+        if (interface->GetDescriptor()->bInterfaceProtocol != 129)
             continue;
 
         if (interface->GetDescriptor()->bNumEndpoints < 2)
@@ -86,17 +96,20 @@ Status Xbox360Controller::OpenInterfaces()
     }
 
     if (!m_inPipe || !m_outPipe)
-        return 369;
+        return 3469;
 
     return rc;
 }
-void Xbox360Controller::CloseInterfaces()
+void Xbox360WirelessController::CloseInterfaces()
 {
+    if (m_presence)
+        WriteToEndpoint(poweroffPacket, sizeof(poweroffPacket));
+
     //m_device->Reset();
     m_device->Close();
 }
 
-Status Xbox360Controller::GetInput()
+Status Xbox360WirelessController::GetInput()
 {
     uint8_t input_bytes[64];
 
@@ -104,38 +117,46 @@ Status Xbox360Controller::GetInput()
 
     uint8_t type = input_bytes[0];
 
-    if (type == XBOX360INPUT_BUTTON) //Button data
+    if (input_bytes[0] & 0x08)
     {
-        m_buttonData = *reinterpret_cast<Xbox360ButtonData *>(input_bytes);
+        bool newPresence = (input_bytes[1] & 0x80) != 0;
+
+        if (m_presence != newPresence)
+        {
+            m_presence = newPresence;
+
+            if (m_presence)
+                OnControllerConnect();
+            else
+                OnControllerDisconnect();
+        }
+    }
+
+    if (input_bytes[1] != 0x1)
+        return 1;
+
+    if (type == XBOX360INPUT_BUTTON)
+    {
+        m_buttonData = *reinterpret_cast<Xbox360ButtonData *>(input_bytes + 4);
     }
 
     return rc;
 }
 
-Status Xbox360Controller::SendInitBytes()
+float Xbox360WirelessController::NormalizeTrigger(uint8_t value)
 {
-    uint8_t init_bytes[]{
-        0x05,
-        0x20, 0x00, 0x01, 0x00};
-
-    Status rc = m_outPipe->Write(init_bytes, sizeof(init_bytes));
-    return rc;
-}
-
-float Xbox360Controller::NormalizeTrigger(uint8_t value)
-{
-    uint16_t deadzone = (UINT8_MAX * _xbox360ControllerConfig.triggerDeadzonePercent) / 100;
+    uint16_t deadzone = (UINT8_MAX * _xbox360WControllerConfig.triggerDeadzonePercent) / 100;
     //If the given value is below the trigger zone, save the calc and return 0, otherwise adjust the value to the deadzone
     return value < deadzone
                ? 0
                : static_cast<float>(value - deadzone) / (UINT8_MAX - deadzone);
 }
 
-void Xbox360Controller::NormalizeAxis(int16_t x,
-                                      int16_t y,
-                                      uint8_t deadzonePercent,
-                                      float *x_out,
-                                      float *y_out)
+void Xbox360WirelessController::NormalizeAxis(int16_t x,
+                                              int16_t y,
+                                              uint8_t deadzonePercent,
+                                              float *x_out,
+                                              float *y_out)
 {
     float x_val = x;
     float y_val = y;
@@ -167,16 +188,16 @@ void Xbox360Controller::NormalizeAxis(int16_t x,
 }
 
 //Pass by value should hopefully be optimized away by RVO
-NormalizedButtonData Xbox360Controller::GetNormalizedButtonData()
+NormalizedButtonData Xbox360WirelessController::GetNormalizedButtonData()
 {
     NormalizedButtonData normalData;
 
     normalData.triggers[0] = NormalizeTrigger(m_buttonData.trigger_left);
     normalData.triggers[1] = NormalizeTrigger(m_buttonData.trigger_right);
 
-    NormalizeAxis(m_buttonData.stick_left_x, m_buttonData.stick_left_y, _xbox360ControllerConfig.leftStickDeadzonePercent,
+    NormalizeAxis(m_buttonData.stick_left_x, m_buttonData.stick_left_y, _xbox360WControllerConfig.leftStickDeadzonePercent,
                   &normalData.sticks[0].axis_x, &normalData.sticks[0].axis_y);
-    NormalizeAxis(m_buttonData.stick_right_x, m_buttonData.stick_right_y, _xbox360ControllerConfig.rightStickDeadzonePercent,
+    NormalizeAxis(m_buttonData.stick_right_x, m_buttonData.stick_right_y, _xbox360WControllerConfig.rightStickDeadzonePercent,
                   &normalData.sticks[1].axis_x, &normalData.sticks[1].axis_y);
 
     bool buttons[NUM_CONTROLLERBUTTONS]{
@@ -202,31 +223,63 @@ NormalizedButtonData Xbox360Controller::GetNormalizedButtonData()
 
     for (int i = 0; i != NUM_CONTROLLERBUTTONS; ++i)
     {
-        ControllerButton button = _xbox360ControllerConfig.buttons[i];
+        ControllerButton button = _xbox360WControllerConfig.buttons[i];
         normalData.buttons[(button != NOT_SET ? button : i)] = buttons[i];
     }
 
     return normalData;
 }
 
-Status Xbox360Controller::SetRumble(uint8_t strong_magnitude, uint8_t weak_magnitude)
+Status Xbox360WirelessController::SetRumble(uint8_t strong_magnitude, uint8_t weak_magnitude)
 {
-    uint8_t rumbleData[]{0x00, sizeof(Xbox360RumbleData), 0x00, strong_magnitude, weak_magnitude, 0x00, 0x00, 0x00};
-    return m_outPipe->Write(rumbleData, sizeof(rumbleData));
+    uint8_t rumbleData[]{0x00, 0x01, 0x0F, 0xC0, 0x00, strong_magnitude, weak_magnitude, 0x00, 0x00, 0x00, 0x00, 0x00};
+    return WriteToEndpoint(rumbleData, sizeof(rumbleData));
 }
 
-Status Xbox360Controller::SetLED(Xbox360LEDValue value)
+Status Xbox360WirelessController::SetLED(Xbox360LEDValue value)
 {
-    uint8_t ledPacket[]{0x01, 0x03, static_cast<uint8_t>(value)};
-    return m_outPipe->Write(ledPacket, sizeof(ledPacket));
+    uint8_t customLEDPacket[]{0x00, 0x00, 0x08, static_cast<uint8_t>(value | 0x40), 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    return WriteToEndpoint(customLEDPacket, sizeof(customLEDPacket));
 }
 
-void Xbox360Controller::LoadConfig(const ControllerConfig *config)
+void Xbox360WirelessController::LoadConfig(const ControllerConfig *config)
 {
-    _xbox360ControllerConfig = *config;
+    _xbox360WControllerConfig = *config;
 }
 
-ControllerConfig *Xbox360Controller::GetConfig()
+ControllerConfig *Xbox360WirelessController::GetConfig()
 {
-    return &_xbox360ControllerConfig;
+    return &_xbox360WControllerConfig;
+}
+
+Status Xbox360WirelessController::OnControllerConnect()
+{
+    m_outputBuffer.push_back(OutputPacket{reconnectPacket, sizeof(reconnectPacket)});
+    m_outputBuffer.push_back(OutputPacket{initDriverPacket, sizeof(initDriverPacket)});
+    m_outputBuffer.push_back(OutputPacket{ledPacketOn, sizeof(ledPacketOn)});
+    return 0;
+}
+
+Status Xbox360WirelessController::OnControllerDisconnect()
+{
+    m_outputBuffer.push_back(OutputPacket{poweroffPacket, sizeof(poweroffPacket)});
+    return 0;
+}
+
+Status Xbox360WirelessController::WriteToEndpoint(const uint8_t *buffer, size_t size)
+{
+    return m_outPipe->Write(buffer, size);
+}
+
+Status Xbox360WirelessController::OutputBuffer()
+{
+    if (m_outputBuffer.empty())
+        return 1;
+
+    Status rc;
+    auto it = m_outputBuffer.begin();
+    rc = WriteToEndpoint(it->packet, it->length);
+    m_outputBuffer.erase(it);
+
+    return rc;
 }

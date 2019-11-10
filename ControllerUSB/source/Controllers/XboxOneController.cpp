@@ -1,7 +1,51 @@
 #include "Controllers/XboxOneController.h"
 #include <cmath>
+#include "../../source/log.h"
 
 static ControllerConfig _xboxoneControllerConfig{};
+
+#define TRIGGER_MAXVALUE 1023
+
+//Following input packets were referenced from https://github.com/torvalds/linux/blob/master/drivers/input/joystick/xpad.c
+
+static const uint8_t xboxone_fw2015_init[] = {
+    0x05, 0x20, 0x00, 0x01, 0x00};
+
+static const uint8_t xboxone_hori_init[] = {
+    0x01, 0x20, 0x00, 0x09, 0x00, 0x04, 0x20, 0x3a,
+    0x00, 0x00, 0x00, 0x80, 0x00};
+
+static const uint8_t xboxone_pdp_init1[] = {
+    0x0a, 0x20, 0x00, 0x03, 0x00, 0x01, 0x14};
+
+static const uint8_t xboxone_pdp_init2[] = {
+    0x06, 0x20, 0x00, 0x02, 0x01, 0x00};
+
+static const uint8_t xboxone_rumblebegin_init[] = {
+    0x09, 0x00, 0x00, 0x09, 0x00, 0x0F, 0x00, 0x00,
+    0x1D, 0x1D, 0xFF, 0x00, 0x00};
+
+static const uint8_t xboxone_rumbleend_init[] = {
+    0x09, 0x00, 0x00, 0x09, 0x00, 0x0F, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00};
+
+struct VendorProductPacket
+{
+    uint16_t VendorID;
+    uint16_t ProductID;
+    const uint8_t *Packet;
+    uint8_t Length;
+};
+
+static VendorProductPacket init_packets[]{
+    {0x0e6f, 0x0165, xboxone_hori_init, sizeof(xboxone_hori_init)},
+    {0x0f0d, 0x0067, xboxone_hori_init, sizeof(xboxone_hori_init)},
+    {0x0000, 0x0000, xboxone_fw2015_init, sizeof(xboxone_fw2015_init)},
+    {0x0e6f, 0x0000, xboxone_pdp_init1, sizeof(xboxone_pdp_init1)},
+    {0x0e6f, 0x0000, xboxone_pdp_init2, sizeof(xboxone_pdp_init2)},
+    {0x24c6, 0x0000, xboxone_rumblebegin_init, sizeof(xboxone_rumblebegin_init)},
+    {0x24c6, 0x0000, xboxone_rumbleend_init, sizeof(xboxone_rumbleend_init)},
+};
 
 XboxOneController::XboxOneController(std::unique_ptr<IUSBDevice> &&interface)
     : IController(std::move(interface))
@@ -45,8 +89,14 @@ Status XboxOneController::OpenInterfaces()
         rc = interface->Open();
         if (S_FAILED(rc))
             return rc;
-        //TODO: check for numEndpoints before trying to open them!
-        if (interface->GetDescriptor()->bNumEndpoints >= 2)
+
+        if (interface->GetDescriptor()->bInterfaceProtocol != 208)
+            continue;
+
+        if (interface->GetDescriptor()->bNumEndpoints < 2)
+            continue;
+
+        if (!m_inPipe)
         {
             for (uint8_t i = 0; i != 15; ++i)
             {
@@ -61,6 +111,10 @@ Status XboxOneController::OpenInterfaces()
                     break;
                 }
             }
+        }
+
+        if (!m_outPipe)
+        {
             for (uint8_t i = 0; i != 15; ++i)
             {
                 IUSBEndpoint *outEndpoint = interface->GetEndpoint(IUSBEndpoint::USB_ENDPOINT_OUT, i);
@@ -84,7 +138,7 @@ Status XboxOneController::OpenInterfaces()
 }
 void XboxOneController::CloseInterfaces()
 {
-    m_device->Reset();
+    //m_device->Reset();
     m_device->Close();
 }
 
@@ -121,26 +175,45 @@ Status XboxOneController::GetInput()
 
 Status XboxOneController::SendInitBytes()
 {
-    uint8_t init_bytes[]{
-        0x05,
-        0x20, 0x00, 0x01, 0x00};
+    Status rc;
+    uint16_t vendor = m_device->GetVendor();
+    uint16_t product = m_device->GetProduct();
+    for (int i = 0; i != (sizeof(init_packets) / sizeof(VendorProductPacket)); ++i)
+    {
+        if (init_packets[i].VendorID != 0 && init_packets[i].VendorID != vendor)
+            continue;
+        if (init_packets[i].ProductID != 0 && init_packets[i].ProductID != product)
+            continue;
 
-    Status rc = m_outPipe->Write(init_bytes, sizeof(init_bytes));
+        uint8_t init_packet[16];
+        for (int byte = 0; byte != init_packets[i].Length; ++byte)
+        {
+            init_packet[byte] = init_packets[i].Packet[byte];
+        }
+
+        init_packet[2] = m_outPacketSerial++;
+
+        rc = m_outPipe->Write(init_packet, init_packets[i].Length);
+        if (S_FAILED(rc))
+            break;
+        else
+            WriteToLog("Send a specific init packet for controller v", vendor, " p", product, " with outPacket ", +init_packet[2]);
+    }
     return rc;
 }
 
 float XboxOneController::NormalizeTrigger(uint16_t value)
 {
+    uint16_t deadzone = (TRIGGER_MAXVALUE * _xboxoneControllerConfig.triggerDeadzonePercent) / 100;
     //If the given value is below the trigger zone, save the calc and return 0, otherwise adjust the value to the deadzone
-    return value < _xboxoneControllerConfig.triggerDeadzone
+    return value < deadzone
                ? 0
-               : static_cast<float>(value - _xboxoneControllerConfig.triggerDeadzone) /
-                     (UINT16_MAX - _xboxoneControllerConfig.triggerDeadzone);
+               : static_cast<float>(value - deadzone) / (TRIGGER_MAXVALUE - deadzone);
 }
 
 void XboxOneController::NormalizeAxis(int16_t x,
                                       int16_t y,
-                                      int16_t deadzone,
+                                      uint8_t deadzonePercent,
                                       float *x_out,
                                       float *y_out)
 {
@@ -150,19 +223,19 @@ void XboxOneController::NormalizeAxis(int16_t x,
     //This will never exceed 32767 because if the stick is
     //horizontally maxed in one direction, vertically it must be neutral(0) and vice versa
     float real_magnitude = std::sqrt(x_val * x_val + y_val * y_val);
+    float real_deadzone = (32767 * deadzonePercent) / 100;
     // Check if the controller is outside a circular dead zone.
-    if (real_magnitude > deadzone)
+    if (real_magnitude > real_deadzone)
     {
         // Clip the magnitude at its expected maximum value.
         float magnitude = std::min(32767.0f, real_magnitude);
         // Adjust magnitude relative to the end of the dead zone.
-        magnitude -= deadzone;
+        magnitude -= real_deadzone;
         // Normalize the magnitude with respect to its expected range giving a
         // magnitude value of 0.0 to 1.0
         //ratio = (currentValue / maxValue) / realValue
-        float ratio = (magnitude / (32767 - deadzone)) / real_magnitude;
-        // Y is negated because xbox controllers have an opposite sign from
-        // the 'standard controller' recommendations.
+        float ratio = (magnitude / (32767 - real_deadzone)) / real_magnitude;
+
         *x_out = x_val * ratio;
         *y_out = y_val * ratio;
     }
@@ -178,37 +251,40 @@ NormalizedButtonData XboxOneController::GetNormalizedButtonData()
 {
     NormalizedButtonData normalData;
 
-    normalData.bottom_action = m_buttonData.a;
-    normalData.right_action = m_buttonData.b;
-    normalData.left_action = m_buttonData.x;
-    normalData.top_action = m_buttonData.y;
+    normalData.triggers[0] = NormalizeTrigger(m_buttonData.trigger_left);
+    normalData.triggers[1] = NormalizeTrigger(m_buttonData.trigger_right);
 
-    normalData.dpad_up = m_buttonData.dpad_up;
-    normalData.dpad_down = m_buttonData.dpad_down;
-    normalData.dpad_left = m_buttonData.dpad_left;
-    normalData.dpad_right = m_buttonData.dpad_right;
+    NormalizeAxis(m_buttonData.stick_left_x, m_buttonData.stick_left_y, _xboxoneControllerConfig.leftStickDeadzonePercent,
+                  &normalData.sticks[0].axis_x, &normalData.sticks[0].axis_y);
+    NormalizeAxis(m_buttonData.stick_right_x, m_buttonData.stick_right_y, _xboxoneControllerConfig.rightStickDeadzonePercent,
+                  &normalData.sticks[1].axis_x, &normalData.sticks[1].axis_y);
 
-    normalData.back = m_buttonData.back;
-    normalData.start = m_buttonData.start;
+    bool buttons[NUM_CONTROLLERBUTTONS]{
+        m_buttonData.y,
+        m_buttonData.b,
+        m_buttonData.a,
+        m_buttonData.x,
+        m_buttonData.stick_left_click,
+        m_buttonData.stick_right_click,
+        m_buttonData.bumper_left,
+        m_buttonData.bumper_right,
+        normalData.triggers[0] > 0,
+        normalData.triggers[1] > 0,
+        m_buttonData.back,
+        m_buttonData.start,
+        m_buttonData.dpad_up,
+        m_buttonData.dpad_right,
+        m_buttonData.dpad_down,
+        m_buttonData.dpad_left,
+        m_buttonData.sync,
+        m_GuidePressed,
+    };
 
-    normalData.left_bumper = m_buttonData.bumper_left;
-    normalData.right_bumper = m_buttonData.bumper_right;
-
-    normalData.left_stick_click = m_buttonData.stick_left_click;
-    normalData.right_stick_click = m_buttonData.stick_right_click;
-
-    normalData.capture = m_buttonData.sync;
-    normalData.home = false;
-
-    normalData.guide = m_GuidePressed;
-
-    normalData.left_trigger = NormalizeTrigger(m_buttonData.trigger_left);
-    normalData.right_trigger = NormalizeTrigger(m_buttonData.trigger_right);
-
-    NormalizeAxis(m_buttonData.stick_left_x, m_buttonData.stick_left_y, _xboxoneControllerConfig.leftStickDeadzone,
-                  &normalData.left_stick_x, &normalData.left_stick_y);
-    NormalizeAxis(m_buttonData.stick_right_x, m_buttonData.stick_right_y, _xboxoneControllerConfig.rightStickDeadzone,
-                  &normalData.right_stick_x, &normalData.right_stick_y);
+    for (int i = 0; i != NUM_CONTROLLERBUTTONS; ++i)
+    {
+        ControllerButton button = _xboxoneControllerConfig.buttons[i];
+        normalData.buttons[(button != NOT_SET ? button : i)] = buttons[i];
+    }
 
     return normalData;
 }
@@ -229,7 +305,7 @@ Status XboxOneController::SetRumble(uint8_t strong_magnitude, uint8_t weak_magni
 {
     uint8_t rumble_data[]{
         0x09, 0x00,
-        m_rumbleDataCounter++,
+        m_outPacketSerial++,
         0x09, 0x00, 0x0f, 0x00, 0x00,
         strong_magnitude,
         weak_magnitude,
@@ -240,4 +316,9 @@ Status XboxOneController::SetRumble(uint8_t strong_magnitude, uint8_t weak_magni
 void XboxOneController::LoadConfig(const ControllerConfig *config)
 {
     _xboxoneControllerConfig = *config;
+}
+
+ControllerConfig *XboxOneController::GetConfig()
+{
+    return &_xboxoneControllerConfig;
 }

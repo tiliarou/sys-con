@@ -1,19 +1,19 @@
-#include "Controllers/Xbox360Controller.h"
+#include "Controllers/XboxController.h"
 #include <cmath>
 
-static ControllerConfig _xbox360ControllerConfig{};
+static ControllerConfig _xboxControllerConfig{};
 
-Xbox360Controller::Xbox360Controller(std::unique_ptr<IUSBDevice> &&interface)
+XboxController::XboxController(std::unique_ptr<IUSBDevice> &&interface)
     : IController(std::move(interface))
 {
 }
 
-Xbox360Controller::~Xbox360Controller()
+XboxController::~XboxController()
 {
     Exit();
 }
 
-Status Xbox360Controller::Initialize()
+Status XboxController::Initialize()
 {
     Status rc;
 
@@ -21,22 +21,21 @@ Status Xbox360Controller::Initialize()
     if (S_FAILED(rc))
         return rc;
 
-    SetLED(XBOX360LED_TOPLEFT);
     return rc;
 }
-void Xbox360Controller::Exit()
+void XboxController::Exit()
 {
     CloseInterfaces();
 }
 
-Status Xbox360Controller::OpenInterfaces()
+Status XboxController::OpenInterfaces()
 {
     Status rc;
     rc = m_device->Open();
     if (S_FAILED(rc))
         return rc;
 
-    //This will open each interface and try to acquire Xbox One controller's in and out endpoints, if it hasn't already
+    //This will open each interface and try to acquire Xbox controller's in and out endpoints, if it hasn't already
     std::vector<std::unique_ptr<IUSBInterface>> &interfaces = m_device->GetInterfaces();
     for (auto &&interface : interfaces)
     {
@@ -44,7 +43,7 @@ Status Xbox360Controller::OpenInterfaces()
         if (S_FAILED(rc))
             return rc;
 
-        if (interface->GetDescriptor()->bInterfaceProtocol != 1)
+        if (interface->GetDescriptor()->bInterfaceProtocol != 0)
             continue;
 
         if (interface->GetDescriptor()->bNumEndpoints < 2)
@@ -86,56 +85,33 @@ Status Xbox360Controller::OpenInterfaces()
     }
 
     if (!m_inPipe || !m_outPipe)
-        return 369;
+        return 69;
 
     return rc;
 }
-void Xbox360Controller::CloseInterfaces()
+void XboxController::CloseInterfaces()
 {
     //m_device->Reset();
     m_device->Close();
 }
 
-Status Xbox360Controller::GetInput()
+Status XboxController::GetInput()
 {
     uint8_t input_bytes[64];
 
     Status rc = m_inPipe->Read(input_bytes, sizeof(input_bytes));
 
-    uint8_t type = input_bytes[0];
-
-    if (type == XBOX360INPUT_BUTTON) //Button data
-    {
-        m_buttonData = *reinterpret_cast<Xbox360ButtonData *>(input_bytes);
-    }
+    if (S_SUCCEEDED(rc))
+        m_buttonData = *reinterpret_cast<XboxButtonData *>(input_bytes);
 
     return rc;
 }
 
-Status Xbox360Controller::SendInitBytes()
-{
-    uint8_t init_bytes[]{
-        0x05,
-        0x20, 0x00, 0x01, 0x00};
-
-    Status rc = m_outPipe->Write(init_bytes, sizeof(init_bytes));
-    return rc;
-}
-
-float Xbox360Controller::NormalizeTrigger(uint8_t value)
-{
-    uint16_t deadzone = (UINT8_MAX * _xbox360ControllerConfig.triggerDeadzonePercent) / 100;
-    //If the given value is below the trigger zone, save the calc and return 0, otherwise adjust the value to the deadzone
-    return value < deadzone
-               ? 0
-               : static_cast<float>(value - deadzone) / (UINT8_MAX - deadzone);
-}
-
-void Xbox360Controller::NormalizeAxis(int16_t x,
-                                      int16_t y,
-                                      uint8_t deadzonePercent,
-                                      float *x_out,
-                                      float *y_out)
+void XboxController::NormalizeAxis(int16_t x,
+                                   int16_t y,
+                                   uint8_t deadzonePercent,
+                                   float *x_out,
+                                   float *y_out)
 {
     float x_val = x;
     float y_val = y;
@@ -167,16 +143,16 @@ void Xbox360Controller::NormalizeAxis(int16_t x,
 }
 
 //Pass by value should hopefully be optimized away by RVO
-NormalizedButtonData Xbox360Controller::GetNormalizedButtonData()
+NormalizedButtonData XboxController::GetNormalizedButtonData()
 {
     NormalizedButtonData normalData;
 
-    normalData.triggers[0] = NormalizeTrigger(m_buttonData.trigger_left);
-    normalData.triggers[1] = NormalizeTrigger(m_buttonData.trigger_right);
+    normalData.triggers[0] = m_buttonData.trigger_left;
+    normalData.triggers[1] = m_buttonData.trigger_right;
 
-    NormalizeAxis(m_buttonData.stick_left_x, m_buttonData.stick_left_y, _xbox360ControllerConfig.leftStickDeadzonePercent,
+    NormalizeAxis(m_buttonData.stick_left_x, m_buttonData.stick_left_y, _xboxControllerConfig.leftStickDeadzonePercent,
                   &normalData.sticks[0].axis_x, &normalData.sticks[0].axis_y);
-    NormalizeAxis(m_buttonData.stick_right_x, m_buttonData.stick_right_y, _xbox360ControllerConfig.rightStickDeadzonePercent,
+    NormalizeAxis(m_buttonData.stick_right_x, m_buttonData.stick_right_y, _xboxControllerConfig.rightStickDeadzonePercent,
                   &normalData.sticks[1].axis_x, &normalData.sticks[1].axis_y);
 
     bool buttons[NUM_CONTROLLERBUTTONS]{
@@ -186,47 +162,40 @@ NormalizedButtonData Xbox360Controller::GetNormalizedButtonData()
         m_buttonData.x,
         m_buttonData.stick_left_click,
         m_buttonData.stick_right_click,
-        m_buttonData.bumper_left,
-        m_buttonData.bumper_right,
-        normalData.triggers[0] > 0,
-        normalData.triggers[1] > 0,
+        false,
+        false,
+        m_buttonData.trigger_left,
+        m_buttonData.trigger_right,
         m_buttonData.back,
         m_buttonData.start,
         m_buttonData.dpad_up,
         m_buttonData.dpad_right,
         m_buttonData.dpad_down,
         m_buttonData.dpad_left,
-        false,
-        m_buttonData.guide,
+        m_buttonData.white_button,
+        m_buttonData.black_buttton,
     };
 
     for (int i = 0; i != NUM_CONTROLLERBUTTONS; ++i)
     {
-        ControllerButton button = _xbox360ControllerConfig.buttons[i];
+        ControllerButton button = _xboxControllerConfig.buttons[i];
         normalData.buttons[(button != NOT_SET ? button : i)] = buttons[i];
     }
 
     return normalData;
 }
 
-Status Xbox360Controller::SetRumble(uint8_t strong_magnitude, uint8_t weak_magnitude)
+Status XboxController::SetRumble(uint8_t strong_magnitude, uint8_t weak_magnitude)
 {
-    uint8_t rumbleData[]{0x00, sizeof(Xbox360RumbleData), 0x00, strong_magnitude, weak_magnitude, 0x00, 0x00, 0x00};
+    uint8_t rumbleData[]{0x00, 0x06, 0x00, strong_magnitude, weak_magnitude, 0x00, 0x00, 0x00};
     return m_outPipe->Write(rumbleData, sizeof(rumbleData));
 }
-
-Status Xbox360Controller::SetLED(Xbox360LEDValue value)
+void XboxController::LoadConfig(const ControllerConfig *config)
 {
-    uint8_t ledPacket[]{0x01, 0x03, static_cast<uint8_t>(value)};
-    return m_outPipe->Write(ledPacket, sizeof(ledPacket));
+    _xboxControllerConfig = *config;
 }
 
-void Xbox360Controller::LoadConfig(const ControllerConfig *config)
+ControllerConfig *XboxController::GetConfig()
 {
-    _xbox360ControllerConfig = *config;
-}
-
-ControllerConfig *Xbox360Controller::GetConfig()
-{
-    return &_xbox360ControllerConfig;
+    return &_xboxControllerConfig;
 }
