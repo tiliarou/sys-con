@@ -56,31 +56,31 @@ private:
     IUSBEndpoint *m_inPipe = nullptr;
     IUSBEndpoint *m_outPipe = nullptr;
 
-    XboxButtonData m_buttonData;
+    XboxButtonData m_buttonData{};
 
 public:
     XboxController(std::unique_ptr<IUSBDevice> &&interface);
-    virtual ~XboxController();
+    virtual ~XboxController() override;
 
-    virtual Status Initialize();
-    virtual void Exit();
+    virtual Result Initialize() override;
+    virtual void Exit() override;
 
-    Status OpenInterfaces();
+    Result OpenInterfaces();
     void CloseInterfaces();
 
-    virtual Status GetInput();
+    virtual Result GetInput() override;
 
-    virtual NormalizedButtonData GetNormalizedButtonData();
+    virtual NormalizedButtonData GetNormalizedButtonData() override;
 
-    virtual ControllerType GetType() { return CONTROLLER_XBOX360; }
+    virtual ControllerType GetType() override { return CONTROLLER_XBOX360; }
 
     inline const XboxButtonData &GetButtonData() { return m_buttonData; };
 
     float NormalizeTrigger(uint8_t value);
     void NormalizeAxis(int16_t x, int16_t y, uint8_t deadzonePercent, float *x_out, float *y_out);
 
-    Status SetRumble(uint8_t strong_magnitude, uint8_t weak_magnitude);
+    Result SetRumble(uint8_t strong_magnitude, uint8_t weak_magnitude);
 
     static void LoadConfig(const ControllerConfig *config);
-    virtual ControllerConfig *GetConfig();
+    virtual ControllerConfig *GetConfig() override;
 };

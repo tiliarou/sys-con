@@ -7,7 +7,7 @@
 //https://github.com/quantus/xbox-one-controller-protocol
 //https://cs.chromium.org/chromium/src/device/gamepad/xbox_controller_mac.mm
 
-enum VendorRequest
+enum VendorRequest : uint8_t
 {
     MT_VEND_DEV_MODE = 0x1,
     MT_VEND_WRITE = 0x2,
@@ -29,16 +29,20 @@ private:
 
 public:
     XboxOneAdapter(std::unique_ptr<IUSBDevice> &&interface);
-    virtual ~XboxOneAdapter();
+    virtual ~XboxOneAdapter() override;
 
-    virtual Status Initialize();
-    virtual void Exit();
+    virtual Result Initialize() override;
+    virtual void Exit() override;
 
-    Status OpenInterfaces();
+    Result OpenInterfaces();
     void CloseInterfaces();
 
-    virtual ControllerType GetType() { return CONTROLLER_XBOXONEW; }
+    virtual ControllerType GetType() override { return CONTROLLER_XBOXONEW; }
 
-    Status SendInitBytes();
-    Status ControlWrite(IUSBInterface *interface, uint16_t address, uint32_t value, VendorRequest request = MT_VEND_MULTI_WRITE);
+    Result LoadFirmwarePart(uint32_t offset, uint8_t *start, uint8_t *end);
+    Result SendInitBytes();
+    Result ControlWrite(IUSBInterface *interface, uint16_t address, uint32_t value, VendorRequest request = MT_VEND_MULTI_WRITE);
+
+    static void LoadConfig(const ControllerConfig *config, const char *path);
+    virtual ControllerConfig *GetConfig() override;
 };

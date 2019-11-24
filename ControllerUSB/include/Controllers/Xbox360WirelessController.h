@@ -18,7 +18,7 @@ private:
     IUSBEndpoint *m_inPipe = nullptr;
     IUSBEndpoint *m_outPipe = nullptr;
 
-    Xbox360ButtonData m_buttonData;
+    Xbox360ButtonData m_buttonData{};
 
     bool m_presence = false;
 
@@ -26,37 +26,37 @@ private:
 
 public:
     Xbox360WirelessController(std::unique_ptr<IUSBDevice> &&interface);
-    virtual ~Xbox360WirelessController();
+    virtual ~Xbox360WirelessController() override;
 
-    virtual Status Initialize();
-    virtual void Exit();
+    virtual Result Initialize() override;
+    virtual void Exit() override;
 
-    Status OpenInterfaces();
+    Result OpenInterfaces();
     void CloseInterfaces();
 
-    virtual Status GetInput();
+    virtual Result GetInput() override;
 
-    virtual NormalizedButtonData GetNormalizedButtonData();
+    virtual NormalizedButtonData GetNormalizedButtonData() override;
 
-    virtual ControllerType GetType() { return CONTROLLER_XBOX360W; }
+    virtual ControllerType GetType() override { return CONTROLLER_XBOX360W; }
 
     inline const Xbox360ButtonData &GetButtonData() { return m_buttonData; };
 
     float NormalizeTrigger(uint8_t value);
     void NormalizeAxis(int16_t x, int16_t y, uint8_t deadzonePercent, float *x_out, float *y_out);
 
-    Status SetRumble(uint8_t strong_magnitude, uint8_t weak_magnitude);
-    Status SetLED(Xbox360LEDValue value);
+    Result SetRumble(uint8_t strong_magnitude, uint8_t weak_magnitude);
+    Result SetLED(Xbox360LEDValue value);
 
-    Status OnControllerConnect();
-    Status OnControllerDisconnect();
+    Result OnControllerConnect();
+    Result OnControllerDisconnect();
 
     static void LoadConfig(const ControllerConfig *config);
-    virtual ControllerConfig *GetConfig();
+    virtual ControllerConfig *GetConfig() override;
 
-    Status WriteToEndpoint(const uint8_t *buffer, size_t size);
+    Result WriteToEndpoint(const uint8_t *buffer, size_t size);
 
-    virtual Status OutputBuffer();
+    virtual Result OutputBuffer() override;
 
     bool IsControllerActive() override { return m_presence; }
 };

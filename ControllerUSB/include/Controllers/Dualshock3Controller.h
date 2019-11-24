@@ -5,7 +5,7 @@
 //References used:
 //https://cs.chromium.org/chromium/src/device/gamepad/dualshock4_controller.cc
 
-enum Dualshock3FeatureValue
+enum Dualshock3FeatureValue : uint16_t
 {
     Ds3FeatureUnknown1 = 0x0201,
     Ds3FeatureUnknown2 = 0x0301,
@@ -17,7 +17,7 @@ enum Dualshock3FeatureValue
     Ds3FeatureUnknown5 = 0x03F8,
 };
 
-enum Dualshock3InputPacketType
+enum Dualshock3InputPacketType : uint8_t
 {
     Ds3InputPacket_Button = 0x01,
 };
@@ -103,7 +103,7 @@ struct Dualshock3ButtonData
 #define PS_MOVE_NAVI_PRODUCT_ID                 0x042F
 */
 
-enum Dualshock3LEDValue
+enum Dualshock3LEDValue : uint8_t
 {
     DS3LED_1 = 0x01,
     DS3LED_2 = 0x02,
@@ -126,36 +126,36 @@ private:
     IUSBEndpoint *m_outPipe = nullptr;
     IUSBInterface *m_interface = nullptr;
 
-    Dualshock3ButtonData m_buttonData;
+    Dualshock3ButtonData m_buttonData{};
 
 public:
     Dualshock3Controller(std::unique_ptr<IUSBDevice> &&interface);
-    virtual ~Dualshock3Controller();
+    virtual ~Dualshock3Controller() override;
 
-    virtual Status Initialize();
-    virtual void Exit();
+    virtual Result Initialize() override;
+    virtual void Exit() override;
 
-    Status OpenInterfaces();
+    Result OpenInterfaces();
     void CloseInterfaces();
 
-    virtual Status GetInput();
+    virtual Result GetInput() override;
 
-    virtual NormalizedButtonData GetNormalizedButtonData();
+    virtual NormalizedButtonData GetNormalizedButtonData() override;
 
-    virtual ControllerType GetType() { return CONTROLLER_DUALSHOCK3; }
+    virtual ControllerType GetType() override { return CONTROLLER_DUALSHOCK3; }
 
     inline const Dualshock3ButtonData &GetButtonData() { return m_buttonData; };
 
     float NormalizeTrigger(uint8_t value);
     void NormalizeAxis(uint8_t x, uint8_t y, uint8_t deadzonePercent, float *x_out, float *y_out);
 
-    Status SendInitBytes();
-    Status SetRumble(uint8_t strong_magnitude, uint8_t weak_magnitude);
+    Result SendInitBytes();
+    Result SetRumble(uint8_t strong_magnitude, uint8_t weak_magnitude);
 
-    static Status SendCommand(IUSBInterface *interface, Dualshock3FeatureValue feature, void *buffer, uint16_t size);
+    static Result SendCommand(IUSBInterface *interface, Dualshock3FeatureValue feature, const void *buffer, uint16_t size);
 
-    Status SetLED(Dualshock3LEDValue value);
+    Result SetLED(Dualshock3LEDValue value);
 
     static void LoadConfig(const ControllerConfig *config);
-    virtual ControllerConfig *GetConfig();
+    virtual ControllerConfig *GetConfig() override;
 };

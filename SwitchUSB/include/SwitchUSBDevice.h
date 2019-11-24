@@ -1,6 +1,6 @@
 #pragma once
-#include "IUSBDevice.h"
 #include "switch.h"
+#include "IUSBDevice.h"
 #include "SwitchUSBInterface.h"
 #include <vector>
 
@@ -14,12 +14,12 @@ public:
     SwitchUSBDevice(UsbHsInterface *interfaces, int length);
 
     //There are no devices to open on the switch, so instead this returns success if there are any interfaces
-    virtual Result Open();
+    virtual Result Open() override;
     //Closes all the interfaces associated with the class
-    virtual void Close();
+    virtual void Close() override;
 
     // Resets the device
-    virtual void Reset();
+    virtual void Reset() override;
 
     //Create interfaces from the given array of specified element length
     void SetInterfaces(UsbHsInterface *interfaces, int length);

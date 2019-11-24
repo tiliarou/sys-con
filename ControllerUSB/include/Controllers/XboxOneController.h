@@ -64,7 +64,7 @@ struct XboxOneRumbleData
     uint8_t extra;
 };
 
-enum XboxOneInputPacketType
+enum XboxOneInputPacketType : uint8_t
 {
     XBONEINPUT_BUTTON = 0x20,
     XBONEINPUT_HEARTBEAT = 0x03,
@@ -78,34 +78,34 @@ private:
     IUSBEndpoint *m_inPipe = nullptr;
     IUSBEndpoint *m_outPipe = nullptr;
 
-    XboxOneButtonData m_buttonData;
+    XboxOneButtonData m_buttonData{};
     bool m_GuidePressed{false};
 
 public:
     XboxOneController(std::unique_ptr<IUSBDevice> &&interface);
-    virtual ~XboxOneController();
+    virtual ~XboxOneController() override;
 
-    virtual Status Initialize();
-    virtual void Exit();
+    virtual Result Initialize() override;
+    virtual void Exit() override;
 
-    Status OpenInterfaces();
+    Result OpenInterfaces();
     void CloseInterfaces();
 
-    virtual Status GetInput();
+    virtual Result GetInput() override;
 
-    virtual NormalizedButtonData GetNormalizedButtonData();
+    virtual NormalizedButtonData GetNormalizedButtonData() override;
 
-    virtual ControllerType GetType() { return CONTROLLER_XBOXONE; }
+    virtual ControllerType GetType() override { return CONTROLLER_XBOXONE; }
 
     inline const XboxOneButtonData &GetButtonData() { return m_buttonData; };
 
     float NormalizeTrigger(uint16_t value);
     void NormalizeAxis(int16_t x, int16_t y, uint8_t deadzonePercent, float *x_out, float *y_out);
 
-    Status SendInitBytes();
-    Status WriteAckGuideReport(uint8_t sequence);
-    Status SetRumble(uint8_t strong_magnitude, uint8_t weak_magnitude);
+    Result SendInitBytes();
+    Result WriteAckGuideReport(uint8_t sequence);
+    Result SetRumble(uint8_t strong_magnitude, uint8_t weak_magnitude);
 
     static void LoadConfig(const ControllerConfig *config);
-    virtual ControllerConfig *GetConfig();
+    virtual ControllerConfig *GetConfig() override;
 };

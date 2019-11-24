@@ -2,6 +2,11 @@
 #include "Controllers/XboxOneAdapter/Firmware.h"
 #include <cmath>
 #include "../../source/log.h"
+#include <fstream>
+#include "cstring"
+
+static ControllerConfig _xboxoneadapterConfig{};
+static char firmwarePath[100];
 
 XboxOneAdapter::XboxOneAdapter(std::unique_ptr<IUSBDevice> &&interface)
     : IController(std::move(interface))
@@ -13,16 +18,16 @@ XboxOneAdapter::~XboxOneAdapter()
     Exit();
 }
 
-Status XboxOneAdapter::Initialize()
+Result XboxOneAdapter::Initialize()
 {
-    Status rc;
+    Result rc;
 
     rc = OpenInterfaces();
-    if (S_FAILED(rc))
+    if (R_FAILED(rc))
         return rc;
 
     rc = SendInitBytes();
-    if (S_FAILED(rc))
+    if (R_FAILED(rc))
         return rc;
     return rc;
 }
@@ -31,18 +36,18 @@ void XboxOneAdapter::Exit()
     CloseInterfaces();
 }
 
-Status XboxOneAdapter::OpenInterfaces()
+Result XboxOneAdapter::OpenInterfaces()
 {
-    Status rc;
+    Result rc;
     rc = m_device->Open();
-    if (S_FAILED(rc))
+    if (R_FAILED(rc))
         return rc;
 
     std::vector<std::unique_ptr<IUSBInterface>> &interfaces = m_device->GetInterfaces();
     for (auto &&interface : interfaces)
     {
         rc = interface->Open();
-        if (S_FAILED(rc))
+        if (R_FAILED(rc))
             return rc;
 
         if (interface->GetDescriptor()->bInterfaceProtocol != 255)
@@ -59,7 +64,7 @@ Status XboxOneAdapter::OpenInterfaces()
             if (inEndpoint)
             {
                 rc = inEndpoint->Open();
-                if (S_FAILED(rc))
+                if (R_FAILED(rc))
                     return 3333;
 
                 m_inPipePacket = inEndpoint;
@@ -72,7 +77,7 @@ Status XboxOneAdapter::OpenInterfaces()
             if (inEndpoint)
             {
                 rc = inEndpoint->Open();
-                if (S_FAILED(rc))
+                if (R_FAILED(rc))
                     return 4444;
 
                 m_inPipe = inEndpoint;
@@ -85,7 +90,7 @@ Status XboxOneAdapter::OpenInterfaces()
             if (outEndpoint)
             {
                 rc = outEndpoint->Open();
-                if (S_FAILED(rc))
+                if (R_FAILED(rc))
                     return 5555;
 
                 m_outPipe = outEndpoint;
@@ -105,44 +110,118 @@ void XboxOneAdapter::CloseInterfaces()
     m_device->Close();
 }
 
-Status XboxOneAdapter::SendInitBytes()
+Result XboxOneAdapter::SendInitBytes()
 {
-    Status rc;
-    rc = ControlWrite(m_interface, 0x9018, 0, MT_VEND_WRITE_CFG);
-    if (S_FAILED(rc))
+    Result rc;
+    DmaConfig config = {};
+
+    config.rxBulkEnabled = 1;
+    config.txBulkEnabled = 1;
+
+    ControlWrite(m_interface, MT_USB_U3DMA_CFG, config.value, MT_VEND_WRITE_CFG);
+    ControlWrite(m_interface, MT_FCE_PSE_CTRL, 0x01);
+    ControlWrite(m_interface, MT_TX_CPU_FROM_FCE_BASE_PTR, 0x400230);
+    ControlWrite(m_interface, MT_TX_CPU_FROM_FCE_MAX_COUNT, 0x01);
+    ControlWrite(m_interface, MT_TX_CPU_FROM_FCE_CPU_DESC_IDX, 0x01);
+    ControlWrite(m_interface, MT_FCE_PDMA_GLOBAL_CONF, 0x44);
+    ControlWrite(m_interface, MT_FCE_SKIP_FS, 0x03);
+
+    WriteToLog("firmware path: ", firmwarePath);
+    if (!firmwarePath || *firmwarePath == '\0')
+    {
+        WriteToLog("But the string is empty!");
+        return 256;
+    }
+
+    std::ifstream fs(firmwarePath, std::ios::binary);
+    if (fs.fail())
+        return 235;
+
+    WriteToLog("Opening file...");
+
+    std::vector<uint8_t> firmware(std::istreambuf_iterator<char>(fs), {});
+
+    WriteToLog("File opened!");
+
+    fs.close();
+
+    WriteToLog("writing ", firmware.size(), " bytes...");
+
+    FwHeader *header = reinterpret_cast<FwHeader *>(firmware.data());
+
+    uint8_t *ilmStart = reinterpret_cast<uint8_t *>(header) + sizeof(FwHeader);
+    uint8_t *dlmStart = ilmStart + header->ilmLength;
+    uint8_t *dlmEnd = dlmStart + header->dlmLength;
+
+    WriteToLog("Writing 1st part");
+
+    rc = LoadFirmwarePart(MT_MCU_ILM_OFFSET, ilmStart, dlmStart);
+    if (R_FAILED(rc))
         return rc;
-    rc = ControlWrite(m_interface, 0x0800, 0x01);
-    if (S_FAILED(rc))
+
+    WriteToLog("Writing 2nd part");
+    rc = LoadFirmwarePart(MT_MCU_DLM_OFFSET, dlmStart, dlmEnd);
+    if (R_FAILED(rc))
         return rc;
-    rc = ControlWrite(m_interface, 0x09a0, 0x400230);
-    if (S_FAILED(rc))
-        return rc;
-    rc = ControlWrite(m_interface, 0x09a4, 0x01);
-    if (S_FAILED(rc))
-        return rc;
-    rc = ControlWrite(m_interface, 0x09a8, 0x01);
-    if (S_FAILED(rc))
-        return rc;
-    rc = ControlWrite(m_interface, 0x09c4, 0x44);
-    if (S_FAILED(rc))
-        return rc;
-    rc = ControlWrite(m_interface, 0x0a6c, 0x03);
-    if (S_FAILED(rc))
-        return rc;
+
+    WriteToLog("Wrote");
 
     return 0;
 }
 
-Status XboxOneAdapter::ControlWrite(IUSBInterface *interface, uint16_t address, uint32_t value, VendorRequest request)
+Result XboxOneAdapter::LoadFirmwarePart(uint32_t offset, uint8_t *start, uint8_t *end)
 {
-    Status rc;
+    // Send firmware in chunks
+    Result rc = -1;
+    for (uint8_t *chunk = start; chunk < end; chunk += MT_FW_CHUNK_SIZE)
+    {
+        uint32_t address = (uint32_t)(offset + chunk - start);
+        uint32_t remaining = (uint32_t)(end - chunk);
+        uint16_t length = remaining > MT_FW_CHUNK_SIZE ? MT_FW_CHUNK_SIZE : remaining;
+
+        rc = ControlWrite(m_interface, MT_FCE_DMA_ADDR, address, MT_VEND_WRITE_CFG);
+        if (R_FAILED(rc))
+            return rc;
+
+        rc = ControlWrite(m_interface, MT_FCE_DMA_LEN, length << 16, MT_VEND_WRITE_CFG);
+        if (R_FAILED(rc))
+            return rc;
+
+        uint8_t data[length + 8]{0x00, 0x38, 0x00, 0x10};
+
+        for (int i = 0; i != length; ++i)
+        {
+            data[i + 4] = chunk[i];
+        }
+
+        rc = m_outPipe->Write(data, sizeof(data));
+        if (R_FAILED(rc))
+            return rc;
+    }
+    return rc;
+}
+
+Result XboxOneAdapter::ControlWrite(IUSBInterface *interface, uint16_t address, uint32_t value, VendorRequest request)
+{
+    Result rc;
     if (request == MT_VEND_DEV_MODE)
     {
-        rc = interface->ControlTransfer(0x42, request, address, 0, 0, nullptr);
+        rc = interface->ControlTransfer(0x40, request, address, 0, 0, static_cast<const void *>(nullptr));
     }
     else
     {
-        rc = interface->ControlTransfer(0x42, request, address, 0, sizeof(uint32_t), &value);
+        rc = interface->ControlTransfer(0x40, request, address, 0, sizeof(uint32_t), &value);
     }
     return rc;
+}
+
+void XboxOneAdapter::LoadConfig(const ControllerConfig *config, const char *path)
+{
+    _xboxoneadapterConfig = *config;
+    strcpy(firmwarePath, path);
+}
+
+ControllerConfig *XboxOneAdapter::GetConfig()
+{
+    return &_xboxoneadapterConfig;
 }

@@ -53,14 +53,14 @@ struct Xbox360RumbleData
     uint8_t dummy2[3];
 };
 
-enum Xbox360InputPacketType
+enum Xbox360InputPacketType : uint8_t
 {
     XBOX360INPUT_BUTTON = 0,
     XBOX360INPUT_LED = 1,
     XBOX360INPUT_RUMBLE = 3,
 };
 
-enum Xbox360LEDValue
+enum Xbox360LEDValue : uint8_t
 {
     XBOX360LED_OFF,
     XBOX360LED_ALLBLINK,
@@ -86,34 +86,34 @@ private:
     IUSBEndpoint *m_inPipe = nullptr;
     IUSBEndpoint *m_outPipe = nullptr;
 
-    Xbox360ButtonData m_buttonData;
+    Xbox360ButtonData m_buttonData{};
 
 public:
     Xbox360Controller(std::unique_ptr<IUSBDevice> &&interface);
-    virtual ~Xbox360Controller();
+    virtual ~Xbox360Controller() override;
 
-    virtual Status Initialize();
-    virtual void Exit();
+    virtual Result Initialize() override;
+    virtual void Exit() override;
 
-    Status OpenInterfaces();
+    Result OpenInterfaces();
     void CloseInterfaces();
 
-    virtual Status GetInput();
+    virtual Result GetInput() override;
 
-    virtual NormalizedButtonData GetNormalizedButtonData();
+    virtual NormalizedButtonData GetNormalizedButtonData() override;
 
-    virtual ControllerType GetType() { return CONTROLLER_XBOX360; }
+    virtual ControllerType GetType() override { return CONTROLLER_XBOX360; }
 
     inline const Xbox360ButtonData &GetButtonData() { return m_buttonData; };
 
     float NormalizeTrigger(uint8_t value);
     void NormalizeAxis(int16_t x, int16_t y, uint8_t deadzonePercent, float *x_out, float *y_out);
 
-    Status SendInitBytes();
-    Status SetRumble(uint8_t strong_magnitude, uint8_t weak_magnitude);
+    Result SendInitBytes();
+    Result SetRumble(uint8_t strong_magnitude, uint8_t weak_magnitude);
 
-    Status SetLED(Xbox360LEDValue value);
+    Result SetLED(Xbox360LEDValue value);
 
     static void LoadConfig(const ControllerConfig *config);
-    virtual ControllerConfig *GetConfig();
+    virtual ControllerConfig *GetConfig() override;
 };
